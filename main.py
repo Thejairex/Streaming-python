@@ -24,60 +24,85 @@ class Aplicacion(ttk.Frame):
         self.address = tk.StringVar(value="127.0.0.1")
         self.port = tk.IntVar(value=5555)
 
-        self.streamer = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        # self.streamer = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
         for index in [0, 1, 2]:
             self.columnconfigure(index=index, weight=1)
             self.rowconfigure(index=index, weight=1)
 
         self.widgets()
-
-    def host(self):
-        def sendFrame():
+        
+    def sendFrame(self):
             # Change if show stream or not
             def switchShowVideo():
                 nonlocal streamerShowVideo
+                if not streamerShowVideo:
+                    self.lbl_img.grid(
+                        row=0, column=0, padx=5, pady=10, sticky="nsew", columnspan=2
+                    )
+                    btn_switch.config(text="Ocultar Video")
                 streamerShowVideo = not streamerShowVideo
 
             # Show stream at Streamer
-            def showVideo():
+            def showVideo(screenshot):
                 nonlocal streamerShowVideo
                 if streamerShowVideo:
                     img_tk = ImageTk.PhotoImage(
                         image=Image.fromarray(screenshot))
-                    lbl_img.config(image=img_tk)
-                    lbl_img.image = img_tk
+                    self.lbl_img.config(image=img_tk)
+                    self.lbl_img.image = img_tk
 
+                else:
+                    self.lbl_img.grid_forget()
+                    btn_switch.config(text="Mostrar Video")    
+
+            def video():
+                # Loop of the stream
+                while True:
+                    try:
+                        # Video
+                        frame = np.array(bot.screenshot())
+                        screenshot = cv.resize(frame, (780, 400))
+
+                        # Send video to server
+                        _, buffer = cv.imencode(".jpg", screenshot)
+                        encoded_image_bytes = buffer.tobytes()
+                        self.streamer.sendall(encoded_image_bytes)
+                    except ConnectionResetError:
+                        break
+                    except OSError:
+                        break
+
+                    # Call the function to show the video
+                    showVideo(screenshot)
+                    
             # Init somethings
             streamerShowVideo = True
-            ttk.Button(self.frmStream, text="Ocultar video", command=switchShowVideo).grid(
+            btn_switch = ttk.Button(self.frmStream, text="Ocultar video", command=switchShowVideo)
+            btn_switch.grid(
                 row=1, column=1, padx=5, pady=10, sticky="nsew"
             )
             
+            # Send Frame
+            self.inStream = True
             # Connect to server like client for stream the video
             server_addr = (self.address.get(), self.port.get())
             self.streamer.connect(server_addr)
+            self.stream = threading.Thread(target=video)
+            self.stream.daemon = True
+            self.stream.start()
+            
 
-            # Loop of the stream
-            while self.inStream:
-                # Video
-                frame = np.array(bot.screenshot())
-                screenshot = cv.resize(frame, (780, 400))
-
-                # Send video to server
-                _, buffer = cv.imencode(".jpg", screenshot)
-                encoded_image_bytes = buffer.tobytes()
-                self.streamer.sendall(encoded_image_bytes)
-
-                # Call the function to show the video
-                showVideo()
-
+    def host(self):
         # Disconnect client and server, and shutdow the video stream comeback to menu
         def shutdownStream():
-            nonlocal server
-            self.streamer.close()
-            server.stop()
+            nonlocal server, runServer
             self.inStream = False
+            self.streamer.send(b"None")
+            server.stop()
+            runServer.join()
+            self.streamer.close()
+            
             self.controlWidgets(True)
 
         # GUI
@@ -88,8 +113,8 @@ class Aplicacion(ttk.Frame):
         )
         self.state_stream = True
 
-        lbl_img = ttk.Label(self.frmStream)
-        lbl_img.grid(
+        self.lbl_img = ttk.Label(self.frmStream)
+        self.lbl_img.grid(
             row=0, column=0, padx=5, pady=10, sticky="nsew", columnspan=2
         )
 
@@ -102,14 +127,10 @@ class Aplicacion(ttk.Frame):
 
         # Server
         server = Server(self.address.get(), self.port.get())
-        threading.Thread(target=server.run).start()
-
-        # Send Frame
-        self.inStream = True
-
-        thread = threading.Thread(target=sendFrame)
-        thread.daemon = True
-        thread.start()
+        runServer = threading.Thread(target=server.run)
+        runServer.start()
+        
+        self.sendFrame()
 
     def client(self):
         print("cliente")
@@ -127,6 +148,7 @@ class Aplicacion(ttk.Frame):
             self.widgets()
 
     def widgets(self):
+        self.streamer = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.frameMain = ttk.Frame(self.master)
         self.frameMain.grid(
             row=0, column=0
